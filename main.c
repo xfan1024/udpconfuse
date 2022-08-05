@@ -24,7 +24,8 @@
 #define UDP_PAYLOAD_MAX     1472
 #define CONNECTION_TIMEOUT  300.
 
-union sockaddr_u {
+union sockaddr_u
+{
   struct sockaddr         sa;
   struct sockaddr_storage ss;
 };
@@ -252,6 +253,8 @@ void udp_connection_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents)
 
 void udp_connection_cb(struct ev_loop *loop, ev_io *w, int revents)
 {
+    struct udp_connection *connection;
+    struct udp_pair *pair;
     if ((revents & EV_READ) && (revents & EV_WRITE))
     {
         fprintf(stderr, "BUG: EV_READ,EV_WRITE both set\n");
@@ -269,11 +272,9 @@ void udp_connection_cb(struct ev_loop *loop, ev_io *w, int revents)
     }
     fprintf(stderr, "BUG: EV_READ,EV_WRITE both not set\n");
 err:
-{
-    struct udp_connection *connection = container_of(w, struct udp_connection, fd_watcher);
-    struct udp_pair *pair = connection->pair;
+    connection = container_of(w, struct udp_connection, fd_watcher);
+    pair = connection->pair;
     udp_pair_delete(pair, loop);
-}
 }
 
 

@@ -11,7 +11,8 @@
 static bool split_host_port(char *s, char **host, char **port)
 {
     char *h, *p, *c = NULL;
-    if (s[0] == '[') {
+    if (s[0] == '[')
+    {
         h = s + 1;
         char *h_end = strchr(h, ']');
         if (!h_end)
@@ -19,7 +20,8 @@ static bool split_host_port(char *s, char **host, char **port)
         h_end[0] = 0;
         if (h_end[1])
             c = &h_end[1];
-    } else {
+    } else
+    {
         h = s;
         c = strchr(s, ':');
     }
@@ -105,6 +107,7 @@ bool sockaddr2str(const struct sockaddr *sa, char buffer[])
     {
         *w++ = '[';
         sockaddr2str_noport(sa, w);
+        w += strlen(w);
         *w++ = ']';
     }
     else

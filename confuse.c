@@ -11,26 +11,28 @@ static inline uint64_t xorshift_next(uint64_t x64)
 	return x64;
 }
 
-void confuse_data(uint8_t *data, unsigned int len, uint64_t srand) {
+void confuse_data(uint8_t *data, unsigned int len, uint64_t srand)
+{
 	unsigned int i;
-	union {
+	union
+	{
 		uint8_t bytes[8];
 		uint64_t val;
 	} u;
 
-	while (likely(len >= 8)) {
+	while (likely(len >= 8))
+	{
 		srand = xorshift_next(srand);
 		u.val = htole64(srand);
-		for (i = 0; i < 8; i++) {
+		for (i = 0; i < 8; i++)
 			*data++ ^= u.bytes[i];
-		}
 		len -= 8;
 	}
-	if (likely(len)) {
+	if (likely(len))
+	{
 		srand = xorshift_next(srand);
 		u.val = htole64(srand);
-		for (i = 0; i < len; i++) {
+		for (i = 0; i < len; i++)
 			*data++ ^= u.bytes[i];
-		}
 	}
 }
