@@ -133,6 +133,8 @@ void parse_args(int argc, char *argv[])
                 fail = true;
             }
             break;
+        default:
+            fail = true;
         }
     }
     if (h)

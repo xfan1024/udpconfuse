@@ -69,7 +69,7 @@ out:
     return ret;
 }
 
-bool sockaddr2str_noport(const struct sockaddr *sa, char buffer[])
+bool sockaddr2str_noport(const struct sockaddr *sa, char buffer[SOCKADDR_NOPORT_STRING_MAX])
 {
     if (sa->sa_family == AF_INET)
     {
@@ -94,7 +94,7 @@ unsigned short sockaddrport(const struct sockaddr *sa)
         return 0;
 }
 
-bool sockaddr2str(const struct sockaddr *sa, char buffer[])
+bool sockaddr2str(const struct sockaddr *sa, char buffer[SOCKADDR_STRING_MAX])
 {
     char *w = buffer;
 

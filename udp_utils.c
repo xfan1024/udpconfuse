@@ -13,10 +13,10 @@ int udp_create_server(const struct sockaddr *local)
         return fd;
     }
     res = 1;
-    res = setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &res, sizeof(res));
+    res = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &res, sizeof(res));
     if (res < 0)
     {
-        perror("setsockopt[SO_REUSEPORT]");
+        perror("setsockopt[SO_REUSEADDR]");
         goto err;
     }
     res = bind(fd, local, sockaddrlen(local));
