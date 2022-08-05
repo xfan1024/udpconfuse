@@ -10,6 +10,7 @@
 #include "udp_utils.h"
 #include "sockaddr_utils.h"
 #include "confuse.h"
+#include "log.h"
 
 #ifndef offsetof
 #define offsetof(type, member) ((size_t) &((type *)0)->member)
@@ -32,10 +33,13 @@ union sockaddr_u
 
 struct config
 {
+    char *bind_str;
+    char *remote_str;
+    int family;
+    int log_level;
+    uint64_t srand;
     union sockaddr_u bind_addr;
     union sockaddr_u remote_addr;
-    int family;
-    uint64_t srand;
 };
 
 struct udp_pair;
@@ -70,36 +74,54 @@ static void help(const char *prog, int exit_code)
     FILE *o = (exit_code == 0 ? stdout : stderr);
     fprintf(o, "Usage: %s options...\n\n", prog);
     fprintf(o, "Options: \n");
-    fprintf(o, "  -h, --help              show this page\n");
-    fprintf(o, "  -b, --bind              local address\n");
-    fprintf(o, "  -r, --remote            remote address\n");
-    fprintf(o, "  --srand                 srand for confuse algorithm\n");
-    fprintf(o, "  -4                      use IPv4 only\n");
-    fprintf(o, "  -6                      use IPv6 only\n");
+    fprintf(o, "  -h, --help                        show this page\n");
+    fprintf(o, "  -b <addr>, --bind <addr>          local address\n");
+    fprintf(o, "  -r <addr>, --remote <addr>        remote address\n");
+    fprintf(o, "  --srand <value>                   srand for confuse algorithm\n");
+    fprintf(o, "  --log-level debug|info|warn|err   set log level\n");
+    fprintf(o, "  -4                                use IPv4 only\n");
+    fprintf(o, "  -6                                use IPv6 only\n");
     exit(exit_code);
 }
 
-#define OPT_SRAND 256
+#define OPT_SRAND       256
+#define OPT_LOG_LEVEL   257
+
+static int log_level_from_string(const char* name)
+{
+#define startswith(string, pattern) memcmp((pattern), (string), strlen((pattern)))
+    if (startswith(name, "debug") == 0)
+        return LOG_DEBUG;
+    if (startswith(name, "info") == 0)
+        return LOG_INFO;
+    if (startswith(name, "warn") == 0)
+        return LOG_WARNING;
+    if (startswith(name, "err") == 0)
+        return LOG_ERR;
+#undef startswith
+    return -1;
+}
 
 void parse_args(int argc, char *argv[])
 {
     static const struct option options[] =
     {
-        {"bind",    required_argument,  NULL, 'b'},
-        {"remote",  required_argument,  NULL, 'r'},
-        {"srand",   required_argument,  NULL, OPT_SRAND},
-        {"help",    no_argument,        NULL, 'h'},
+        {"bind",        required_argument,  NULL, 'b'},
+        {"remote",      required_argument,  NULL, 'r'},
+        {"srand",       required_argument,  NULL, OPT_SRAND},
+        {"log-level",   required_argument,  NULL, OPT_LOG_LEVEL},
+        {"help",        no_argument,        NULL, 'h'},
         {},
     };
 
-    char *b, *r;
+    int res;
     bool h;
 
     h = false;
-    b = r = NULL;
 
     config.family = AF_UNSPEC;
     config.srand = DEFAULT_SRAND_VAL;
+    config.log_level = LOG_WARNING;
     bool fail = false;
     while (1)
     {
@@ -110,10 +132,10 @@ void parse_args(int argc, char *argv[])
         switch (o)
         {
         case 'b':
-            b = optarg;
+            config.bind_str = optarg;
             break;
         case 'r':
-            r = optarg;
+            config.remote_str = optarg;
             break;
         case 'h':
             h = true;
@@ -126,12 +148,22 @@ void parse_args(int argc, char *argv[])
             break;
         case OPT_SRAND:
             errno = 0;
-            config.srand = strtoull(optarg, NULL, 0);
+            config.srand = strtoull(optarg, NULL, 10);
             if (errno)
             {
                 fprintf(stderr, "wrong srand: %s\n", optarg);
                 fail = true;
             }
+            break;
+        case OPT_LOG_LEVEL:
+            res = log_level_from_string(optarg);
+            if (res < 0)
+            {
+                fprintf(stderr, "wrong log level: %s\n", optarg);
+                fail = true;
+                break;
+            }
+            config.log_level = res;
             break;
         default:
             fail = true;
@@ -142,12 +174,12 @@ void parse_args(int argc, char *argv[])
         help(argv[0], 0);
         exit(0);
     }
-    if (!b)
+    if (!config.bind_str)
     {
         fprintf(stderr, "missing bind address\n");
         fail = true;
     }
-    if (!r)
+    if (!config.remote_str)
     {
         fprintf(stderr, "missing remote address\n");
         fail = true;
@@ -155,22 +187,30 @@ void parse_args(int argc, char *argv[])
 
     if (fail)
         help(argv[0], 1);
-
-    if (!str2sockaddr(b, config.family, &config.bind_addr.sa) || sockaddrport(&config.bind_addr.sa) == 0)
-    {
-        fprintf(stderr, "wrong bind address: %s\n", b);
-        exit(1);
-    }
-
-    if (!str2sockaddr(r, config.family, &config.remote_addr.sa) || sockaddrport(&config.remote_addr.sa) == 0)
-    {
-        fprintf(stderr, "wrong remote address: %s\n", r);
-        exit(1);
-    }
 }
 
 void udp_pair_delete(struct udp_pair *pair, struct ev_loop *loop);
 
+bool udp_connection_is_client_side(struct udp_connection *conn)
+{
+    return conn == &conn->pair->client;
+}
+
+bool udp_connection_is_server_side(struct udp_connection *conn)
+{
+    return conn == &conn->pair->server;
+}
+
+const char* udp_connection_side_string(struct udp_connection *conn)
+{
+    return udp_connection_is_client_side(conn) ? "client-side" : "server-side";
+}
+
+struct udp_connection* udp_connection_get_another(struct udp_connection *conn)
+{
+    struct udp_pair *pair = conn->pair;
+    return (conn == &pair->client) ? &pair->server : &pair->client;
+}
 
 int udp_connection_store_addr(struct udp_connection *conn)
 {
@@ -214,12 +254,25 @@ void udp_connection_recv_cb(struct ev_loop *loop, ev_io *w)
     ssize_t sz;
     struct udp_connection *connection = container_of(w, struct udp_connection, fd_watcher);
     struct udp_pair *pair = connection->pair;
-    struct udp_connection *another = (connection == &pair->client) ? &pair->server : &pair->client;
+    struct udp_connection *another = udp_connection_get_another(connection);
+
     sz = recv(connection->fd, pair->buffer, UDP_PAYLOAD_MAX, 0);
     if (sz <= 0)
     {
+        if (log_warn_check())
+        {
+            char straddr[SOCKADDR_STRING_MAX];
+            sockaddr2str(&connection->addr.sa, straddr);
+            log_warn("recv from %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
+        }
         udp_pair_delete(pair, loop);
         return;
+    }
+    if (log_debug_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&connection->addr.sa, straddr);
+        log_debug("recv from %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
     }
     pair->size = (size_t)sz;
     udp_connection_disallow_recv(&pair->client, loop);
@@ -237,8 +290,20 @@ void udp_connection_send_cb(struct ev_loop *loop, ev_io *w)
     sz = send(connection->fd, pair->buffer, pair->size, 0);
     if (sz <= 0)
     {
+        if (log_warn_check())
+        {
+            char straddr[SOCKADDR_STRING_MAX];
+            sockaddr2str(&connection->addr.sa, straddr);
+            log_warn("send to %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
+        }
         udp_pair_delete(pair, loop);
         return;
+    }
+    if (log_debug_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&connection->addr.sa, straddr);
+        log_debug("send to %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
     }
     udp_connection_disallow_send(connection, loop);
     udp_connection_allow_recv(&pair->client, loop);
@@ -250,6 +315,13 @@ void udp_connection_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents)
     (void)revents;
     struct udp_connection *connection = container_of(w, struct udp_connection, timeout_watcher);
     struct udp_pair *pair = connection->pair;
+
+    if (log_debug_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&connection->addr.sa, straddr);
+        log_debug("%s(%s) timeout\n", udp_connection_side_string(connection), straddr);
+    }
     udp_pair_delete(pair, loop);
 }
 
@@ -259,7 +331,7 @@ void udp_connection_cb(struct ev_loop *loop, ev_io *w, int revents)
     struct udp_pair *pair;
     if ((revents & EV_READ) && (revents & EV_WRITE))
     {
-        fprintf(stderr, "BUG: EV_READ,EV_WRITE both set\n");
+        log_err("BUG: EV_READ,EV_WRITE both set\n");
         goto err;
     }
     if (revents & EV_READ)
@@ -272,7 +344,7 @@ void udp_connection_cb(struct ev_loop *loop, ev_io *w, int revents)
         udp_connection_send_cb(loop, w);
         return;
     }
-    fprintf(stderr, "BUG: EV_READ,EV_WRITE both not set\n");
+    log_err("BUG: EV_READ,EV_WRITE both not set\n");
 err:
     connection = container_of(w, struct udp_connection, fd_watcher);
     pair = connection->pair;
@@ -316,6 +388,12 @@ void udp_pair_delete(struct udp_pair *pair, struct ev_loop *loop)
     ev_io_stop(loop, &pair->server.fd_watcher);
     ev_timer_stop(loop, &pair->client.timeout_watcher);
     ev_timer_stop(loop, &pair->server.timeout_watcher);
+    if (log_info_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&pair->client.addr.sa, straddr);
+        log_info("close connection: %s\n", straddr);
+    }
     close(pair->client.fd);
     close(pair->server.fd);
     free(pair);
@@ -324,9 +402,15 @@ void udp_pair_delete(struct udp_pair *pair, struct ev_loop *loop)
 void acceptor_cb(struct ev_loop *loop, ev_io *w, int revents)
 {
     (void)revents;
-    struct sockaddr_storage remote_addr;
-    int fd = udp_accept(w->fd, (struct sockaddr*)&remote_addr);
+    union sockaddr_u remote_addr;
+    int fd = udp_accept(w->fd, &remote_addr.sa);
     int client = w->fd;
+    if (log_info_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&remote_addr.sa, straddr);
+        log_info("accept connection: %s\n", straddr);
+    }
     // restart watcher for new acceptor
     ev_io_stop(loop, w);
     ev_io_set(w, fd, EV_READ);
@@ -344,6 +428,14 @@ int start_server()
     tmp = udp_create_server(&config.bind_addr.sa);
     if (tmp < 0)
         return tmp;
+    if (log_info_check())
+    {
+        char straddr_bind[SOCKADDR_STRING_MAX];
+        char straddr_remote[SOCKADDR_STRING_MAX];
+        sockaddr2str(&config.bind_addr.sa, straddr_bind);
+        sockaddr2str(&config.remote_addr.sa, straddr_remote);
+        log_info("server started: bind %s, remote %s\n", straddr_bind, straddr_remote);
+    }
     ev_init(&watcher, acceptor_cb);
     ev_io_set(&watcher, tmp, EV_READ);
     ev_io_start(loop, &watcher);
@@ -356,5 +448,19 @@ int main(int argc, char *argv[])
     if (argc < 2)
         help(argv[0], 0);
     parse_args(argc, argv);
+    log_level(config.log_level);
+    if (!str2sockaddr(config.bind_str, config.family, &config.bind_addr.sa)
+        || sockaddrport(&config.bind_addr.sa) == 0)
+    {
+        log_err("wrong bind address: %s\n", config.bind_str);
+        exit(1);
+    }
+
+    if (!str2sockaddr(config.remote_str, config.family, &config.remote_addr.sa)
+        || sockaddrport(&config.remote_addr.sa) == 0)
+    {
+        log_err("wrong remote address: %s\n", config.remote_str);
+        exit(1);
+    }
     return start_server();
 }

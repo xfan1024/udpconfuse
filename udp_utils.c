@@ -1,8 +1,13 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 #include "sockaddr_utils.h"
 #include "udp_utils.h"
+#include "log.h"
+
+#define perror(hint) log_err(hint ": %s\n", strerror(errno))
 
 int udp_create_server(const struct sockaddr *local)
 {
@@ -77,7 +82,7 @@ int udp_accept(int acceptor, struct sockaddr *addr)
     res = udp_create_server((struct sockaddr*)&local);
     if (res < 0)
     {
-        fprintf(stderr, "create new acceptor fail\n");
+        log_err("create new acceptor fail\n");
         abort();
     }
     return res;

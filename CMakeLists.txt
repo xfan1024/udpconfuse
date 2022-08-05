@@ -7,6 +7,6 @@ set(CMAKE_C_FLAGS_DEBUG "-g")
 set(CMAKE_C_FLAGS_RELEASE "-O3")
 
 find_package(Libev REQUIRED)
-add_executable(${PROJECT_NAME} main.c confuse.c sockaddr_utils.c udp_utils.c)
+add_executable(${PROJECT_NAME} main.c confuse.c sockaddr_utils.c udp_utils.c log.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ${LIBEV_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBEV_LIBRARY})
