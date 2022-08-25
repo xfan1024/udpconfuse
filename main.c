@@ -249,6 +249,36 @@ void udp_connection_reset_timer(struct udp_connection *conn, struct ev_loop *loo
     ev_timer_start(loop, &conn->timeout_watcher);
 }
 
+// reuturn value:
+//   0 means success
+//   1 means need to wait kernel buffer avaiable
+//   -1 means failed and pair was closed
+int udp_connection_do_send(struct udp_connection *conn, bool allow_eagain, struct ev_loop *loop)
+{
+    struct udp_pair *pair = conn->pair;
+    ssize_t sz = send(conn->fd, pair->buffer, pair->size, 0);
+    if (sz <= 0)
+    {
+        if (allow_eagain && errno == EAGAIN)
+            return 1;
+        if (log_warn_check())
+        {
+            char straddr[SOCKADDR_STRING_MAX];
+            sockaddr2str(&conn->addr.sa, straddr);
+            log_warn("send to %s(fd=%d) return %d\n", straddr, conn->fd, (int)sz);
+        }
+        udp_pair_delete(pair, loop);
+        return -1;
+    }
+    if (log_debug_check())
+    {
+        char straddr[SOCKADDR_STRING_MAX];
+        sockaddr2str(&conn->addr.sa, straddr);
+        log_debug("send to %s(fd=%d) return %d\n", straddr, conn->fd, (int)sz);
+    }
+    return 0;
+}
+
 void udp_connection_recv_cb(struct ev_loop *loop, ev_io *w)
 {
     ssize_t sz;
@@ -275,37 +305,21 @@ void udp_connection_recv_cb(struct ev_loop *loop, ev_io *w)
         log_debug("recv from %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
     }
     pair->size = (size_t)sz;
-    udp_connection_disallow_recv(&pair->client, loop);
-    udp_connection_disallow_recv(&pair->server, loop);
-    udp_connection_allow_send(another, loop);
     udp_connection_reset_timer(connection, loop);
+    if (udp_connection_do_send(another, true, loop) == 1)
+    {
+        udp_connection_disallow_recv(connection, loop);
+        udp_connection_allow_send(another, loop);
+    }
 }
 
 void udp_connection_send_cb(struct ev_loop *loop, ev_io *w)
 {
-    ssize_t sz;
     struct udp_connection *connection = container_of(w, struct udp_connection, fd_watcher);
     struct udp_pair *pair = connection->pair;
     confuse_data(pair->buffer, pair->size, config.srand);
-    sz = send(connection->fd, pair->buffer, pair->size, 0);
-    if (sz <= 0)
-    {
-        if (log_warn_check())
-        {
-            char straddr[SOCKADDR_STRING_MAX];
-            sockaddr2str(&connection->addr.sa, straddr);
-            log_warn("send to %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
-        }
-        udp_pair_delete(pair, loop);
+    if (udp_connection_do_send(connection, false, loop))
         return;
-    }
-    if (log_debug_check())
-    {
-        char straddr[SOCKADDR_STRING_MAX];
-        sockaddr2str(&connection->addr.sa, straddr);
-        log_debug("send to %s(fd=%d) return %d\n", straddr, connection->fd, (int)sz);
-    }
-    udp_connection_disallow_send(connection, loop);
     udp_connection_allow_recv(&pair->client, loop);
     udp_connection_allow_recv(&pair->server, loop);
 }
