@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <ev.h>
@@ -189,6 +190,24 @@ void parse_args(int argc, char *argv[])
         help(argv[0], 1);
 }
 
+int setnonblock(int fd)
+{
+    int res;
+    res = fcntl(fd, F_GETFL);
+    if (res < 0)
+    {
+        log_err("fcntl[F_GETFL] on %d fail: %s\n", fd, strerror(errno));
+        return res;
+    }
+    res = fcntl(fd, F_SETFL, res | O_NONBLOCK);
+    if (res < 0)
+    {
+        log_err("fcntl[F_SETFL] on %d fail: %s\n", fd, strerror(errno));
+        return res;
+    }
+    return 0;
+}
+
 void udp_pair_delete(struct udp_pair *pair, struct ev_loop *loop);
 
 bool udp_connection_is_client_side(struct udp_connection *conn)
@@ -365,7 +384,6 @@ err:
     udp_pair_delete(pair, loop);
 }
 
-
 void udp_pair_create(struct ev_loop *loop, int client_fd)
 {
     struct udp_pair *pair = (struct udp_pair*)calloc(1, sizeof(struct udp_pair));
@@ -378,7 +396,13 @@ void udp_pair_create(struct ev_loop *loop, int client_fd)
     if (udp_connection_store_addr(client) < 0)
         goto err;
     server->fd = udp_create_client(&config.remote_addr.sa);
+    if (server->fd < 0)
+        goto err;
     if (udp_connection_store_addr(server) < 0)
+        goto err;
+    if (setnonblock(client->fd) < 0)
+        goto err;
+    if (setnonblock(server->fd) < 0)
         goto err;
     ev_timer_init(&client->timeout_watcher, udp_connection_timeout_cb, CONNECTION_TIMEOUT, 0);
     ev_timer_init(&server->timeout_watcher, udp_connection_timeout_cb, CONNECTION_TIMEOUT, 0);
